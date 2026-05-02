@@ -3,12 +3,16 @@ const multer = require('multer');
 const path = require('path');
 const crypto = require('crypto');
 const cors = require('cors');
+const fs = require('fs');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'mi_secreto_super_seguro_2024';
 
-// Configuración de Supabase
+// Configuración de Supabase (SOLO PARA IMÁGENES)
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://gcuvitntyjiahpzpfzer.supabase.co';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_RheK_MsEe-YffOuR9XMmjQ_Mpcutq1o';
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -18,135 +22,164 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// Configurar Multer (memoria)
-const storage = multer.memoryStorage();
-const upload = multer({ 
-    storage: storage,
-    limits: { fileSize: 100 * 1024 * 1024 }
-});
+// Archivo para guardar usuarios
+const USERS_FILE = path.join(__dirname, 'users.json');
 
-// ============ RUTAS DE AUTENTICACIÓN ============
+// Inicializar archivo de usuarios si no existe
+if (!fs.existsSync(USERS_FILE)) {
+    fs.writeFileSync(USERS_FILE, JSON.stringify([]));
+}
+
+// ============ FUNCIONES DE USUARIOS ============
+
+function getUsers() {
+    const data = fs.readFileSync(USERS_FILE);
+    return JSON.parse(data);
+}
+
+function saveUsers(users) {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+}
+
+// ============ RUTAS DE AUTENTICACIÓN (LOCAL) ============
 
 // Registro de usuario
 app.post('/api/register', async (req, res) => {
-    const { email, password, username } = req.body;
+    const { username, email, password } = req.body;
     
-    if (!email || !password || !username) {
+    if (!username || !email || !password) {
         return res.status(400).json({ error: 'Faltan campos requeridos' });
     }
 
+    const users = getUsers();
+    
+    // Verificar si el email ya existe
+    if (users.find(u => u.email === email)) {
+        return res.status(400).json({ error: 'El email ya está registrado' });
+    }
+    
+    // Verificar si el username ya existe
+    if (users.find(u => u.username === username)) {
+        return res.status(400).json({ error: 'El nombre de usuario ya existe' });
+    }
+
     try {
-        const { data, error } = await supabase.auth.signUp({
-            email: email,
-            password: password,
-            options: {
-                data: {
-                    username: username,
-                    full_name: username
-                }
-            }
-        });
-
-        if (error) throw error;
-
-        // Crear tabla para archivos del usuario
-        const { error: tableError } = await supabase
-            .from('user_files')
-            .insert([
-                { user_id: data.user.id, files: [] }
-            ]);
-
+        // Hashear contraseña
+        const hashedPassword = await bcrypt.hash(password, 10);
+        
+        // Crear nuevo usuario
+        const newUser = {
+            id: crypto.randomBytes(16).toString('hex'),
+            username,
+            email,
+            password: hashedPassword,
+            createdAt: new Date().toISOString()
+        };
+        
+        users.push(newUser);
+        saveUsers(users);
+        
         res.json({ success: true, message: 'Usuario creado exitosamente' });
     } catch (error) {
-        console.error('Error en registro:', error);
-        res.status(400).json({ error: error.message });
+        console.error('Error:', error);
+        res.status(500).json({ error: 'Error al crear usuario' });
     }
 });
 
 // Login
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
+    
+    if (!email || !password) {
+        return res.status(400).json({ error: 'Faltan campos requeridos' });
+    }
 
+    const users = getUsers();
+    const user = users.find(u => u.email === email);
+    
+    if (!user) {
+        return res.status(401).json({ error: 'Credenciales incorrectas' });
+    }
+    
     try {
-        const { data, error } = await supabase.auth.signInWithPassword({
-            email: email,
-            password: password
-        });
-
-        if (error) throw error;
-
-        res.json({ 
-            success: true, 
-            token: data.session.access_token,
+        const validPassword = await bcrypt.compare(password, user.password);
+        
+        if (!validPassword) {
+            return res.status(401).json({ error: 'Credenciales incorrectas' });
+        }
+        
+        // Generar token JWT
+        const token = jwt.sign(
+            { id: user.id, email: user.email, username: user.username },
+            JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+        
+        res.json({
+            success: true,
+            token,
             user: {
-                id: data.user.id,
-                email: data.user.email,
-                username: data.user.user_metadata.username
+                id: user.id,
+                email: user.email,
+                username: user.username
             }
         });
     } catch (error) {
-        console.error('Error en login:', error);
-        res.status(401).json({ error: 'Credenciales incorrectas' });
+        console.error('Error:', error);
+        res.status(500).json({ error: 'Error al iniciar sesión' });
     }
 });
 
 // Verificar token
-app.post('/api/verify', async (req, res) => {
+app.post('/api/verify', (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
-
+    
     if (!token) {
         return res.status(401).json({ error: 'No token provided' });
     }
-
-    try {
-        const { data: { user }, error } = await supabase.auth.getUser(token);
-        
-        if (error) throw error;
-        
-        res.json({ valid: true, user: user });
-    } catch (error) {
-        res.status(401).json({ valid: false, error: error.message });
-    }
-});
-
-// Cerrar sesión
-app.post('/api/logout', async (req, res) => {
-    const token = req.headers.authorization?.split(' ')[1];
     
-    if (token) {
-        await supabase.auth.signOut();
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        res.json({ valid: true, user: decoded });
+    } catch (error) {
+        res.status(401).json({ valid: false, error: 'Token inválido' });
     }
-    res.json({ success: true });
 });
 
-// ============ RUTAS DE ARCHIVOS ============
+// ============ RUTAS DE ARCHIVOS (Con Supabase) ============
 
-// Subir archivo (solo autenticado)
-app.post('/api/upload', upload.single('file'), async (req, res) => {
+// Middleware para verificar token
+function authMiddleware(req, res, next) {
     const token = req.headers.authorization?.split(' ')[1];
     
     if (!token) {
         return res.status(401).json({ error: 'No autorizado' });
     }
-
-    // Verificar usuario
-    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
     
-    if (userError || !user) {
-        return res.status(401).json({ error: 'Token inválido' });
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.user = decoded;
+        next();
+    } catch (error) {
+        res.status(401).json({ error: 'Token inválido' });
     }
+}
 
+const upload = multer({ storage: multer.memoryStorage() });
+
+// Subir archivo a Supabase
+app.post('/api/upload', authMiddleware, upload.single('file'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded' });
     }
 
     const randomName = crypto.randomBytes(8).toString('hex');
     const ext = path.extname(req.file.originalname);
-    const fileName = `${user.id}/${randomName}${ext}`;
+    const fileName = `${req.user.id}/${randomName}${ext}`;
 
     try {
-        // Subir a Supabase Storage
-        const { data, error } = await supabase.storage
+        // Subir a Supabase
+        const { error } = await supabase.storage
             .from('cdn-imagenes')
             .upload(fileName, req.file.buffer, {
                 contentType: req.file.mimetype,
@@ -160,7 +193,15 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
             .from('cdn-imagenes')
             .getPublicUrl(fileName);
 
-        // Guardar metadata en la tabla user_files
+        // Guardar metadata en archivo local (cada usuario tiene su archivo)
+        const userFilesFile = path.join(__dirname, `user_files_${req.user.id}.json`);
+        let userFiles = [];
+        
+        if (fs.existsSync(userFilesFile)) {
+            const data = fs.readFileSync(userFilesFile);
+            userFiles = JSON.parse(data);
+        }
+        
         const fileMetadata = {
             id: randomName,
             name: req.file.originalname,
@@ -169,33 +210,11 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
             type: req.file.mimetype,
             date: new Date().toISOString()
         };
-
-        // Obtener archivos actuales del usuario
-        const { data: existingFiles, error: fetchError } = await supabase
-            .from('user_files')
-            .select('files')
-            .eq('user_id', user.id)
-            .single();
-
-        let currentFiles = existingFiles?.files || [];
-        currentFiles.push(fileMetadata);
-
-        // Actualizar la lista
-        const { error: updateError } = await supabase
-            .from('user_files')
-            .upsert({ 
-                user_id: user.id, 
-                files: currentFiles 
-            });
-
-        if (updateError) throw updateError;
-
-        res.json({ 
-            success: true, 
-            url: publicUrl,
-            file: fileMetadata
-        });
-
+        
+        userFiles.push(fileMetadata);
+        fs.writeFileSync(userFilesFile, JSON.stringify(userFiles, null, 2));
+        
+        res.json({ success: true, url: publicUrl, file: fileMetadata });
     } catch (error) {
         console.error('Error:', error);
         res.status(500).json({ error: 'Error uploading file' });
@@ -203,79 +222,58 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 });
 
 // Obtener archivos del usuario
-app.get('/api/my-files', async (req, res) => {
-    const token = req.headers.authorization?.split(' ')[1];
+app.get('/api/my-files', authMiddleware, (req, res) => {
+    const userFilesFile = path.join(__dirname, `user_files_${req.user.id}.json`);
     
-    if (!token) {
-        return res.status(401).json({ error: 'No autorizado' });
+    if (!fs.existsSync(userFilesFile)) {
+        return res.json({ files: [] });
     }
-
-    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
     
-    if (userError || !user) {
-        return res.status(401).json({ error: 'Token inválido' });
-    }
-
     try {
-        const { data, error } = await supabase
-            .from('user_files')
-            .select('files')
-            .eq('user_id', user.id)
-            .single();
-
-        if (error && error.code !== 'PGRST116') throw error;
-
-        res.json({ files: data?.files || [] });
+        const data = fs.readFileSync(userFilesFile);
+        const files = JSON.parse(data);
+        res.json({ files });
     } catch (error) {
-        console.error('Error:', error);
         res.json({ files: [] });
     }
 });
 
 // Eliminar archivo
-app.delete('/api/delete/:fileId', async (req, res) => {
-    const token = req.headers.authorization?.split(' ')[1];
-    
-    if (!token) {
-        return res.status(401).json({ error: 'No autorizado' });
-    }
-
-    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
-    
-    if (userError || !user) {
-        return res.status(401).json({ error: 'Token inválido' });
-    }
-
+app.delete('/api/delete/:fileId', authMiddleware, async (req, res) => {
     const { fileId } = req.params;
-
+    const userFilesFile = path.join(__dirname, `user_files_${req.user.id}.json`);
+    
+    if (!fs.existsSync(userFilesFile)) {
+        return res.status(404).json({ error: 'No files found' });
+    }
+    
     try {
-        // Eliminar de Storage
-        const filePath = `${user.id}/${fileId}`;
-        const { error: storageError } = await supabase.storage
-            .from('cdn-imagenes')
-            .remove([filePath]);
-
-        if (storageError) throw storageError;
-
+        const data = fs.readFileSync(userFilesFile);
+        let userFiles = JSON.parse(data);
+        const fileToDelete = userFiles.find(f => f.id === fileId);
+        
+        if (!fileToDelete) {
+            return res.status(404).json({ error: 'File not found' });
+        }
+        
+        // Eliminar de Supabase
+        const filePath = `${req.user.id}/${fileId}${path.extname(fileToDelete.name)}`;
+        await supabase.storage.from('cdn-imagenes').remove([filePath]);
+        
         // Eliminar metadata
-        const { data: existingFiles } = await supabase
-            .from('user_files')
-            .select('files')
-            .eq('user_id', user.id)
-            .single();
-
-        const currentFiles = existingFiles?.files || [];
-        const updatedFiles = currentFiles.filter(f => f.id !== fileId);
-
-        await supabase
-            .from('user_files')
-            .upsert({ user_id: user.id, files: updatedFiles });
-
+        userFiles = userFiles.filter(f => f.id !== fileId);
+        fs.writeFileSync(userFilesFile, JSON.stringify(userFiles, null, 2));
+        
         res.json({ success: true });
     } catch (error) {
         console.error('Error:', error);
         res.status(500).json({ error: 'Error deleting file' });
     }
+});
+
+// Servir index.html
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.listen(PORT, () => {
