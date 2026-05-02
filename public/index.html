@@ -3,41 +3,227 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gohan File - Administrador de Archivos</title>
-    <link rel="stylesheet" href="style.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <title>Gohan File - Login</title>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Roboto', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            width: 450px;
+            max-width: 90%;
+            padding: 40px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .tabs {
+            display: flex;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #eee;
+        }
+
+        .tab {
+            flex: 1;
+            text-align: center;
+            padding: 10px;
+            cursor: pointer;
+            color: #666;
+            transition: all 0.3s;
+        }
+
+        .tab.active {
+            color: #667eea;
+            border-bottom: 2px solid #667eea;
+            margin-bottom: -2px;
+        }
+
+        .form {
+            display: none;
+        }
+
+        .form.active {
+            display: block;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .error {
+            color: red;
+            text-align: center;
+            margin-top: 15px;
+            font-size: 14px;
+        }
+
+        .success {
+            color: green;
+            text-align: center;
+            margin-top: 15px;
+            font-size: 14px;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>Gohan File</h1>
-            <p>Sube tus archivos de forma rápida y sencilla</p>
-        </header>
+        <h1>🚀 Gohan File</h1>
+        <p class="subtitle">Tu almacenamiento en la nube</p>
 
-        <main>
-            <div id="drop-area">
-                <form class="my-form">
-                    <p>Arrastra y suelta archivos aquí o haz clic para seleccionar</p>
-                    <input type="file" id="fileElem" multiple accept="*" onchange="handleFiles(this.files)">
-                    <label class="button" for="fileElem">Seleccionar archivos</label>
-                </form>
-                <progress id="progress-bar" max=100 value=0></progress>
-                <div id="gallery"></div>
-            </div>
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('login')">Iniciar Sesión</div>
+            <div class="tab" onclick="switchTab('register')">Registrarse</div>
+        </div>
 
-            <div id="result-area" class="hidden">
-                <h3>Archivos subidos:</h3>
-                <div id="file-list"></div>
-                <a href="/" class="button">Subir más</a>
-            </div>
-        </main>
+        <!-- Login Form -->
+        <div id="login-form" class="form active">
+            <input type="email" id="login-email" placeholder="Correo electrónico">
+            <input type="password" id="login-password" placeholder="Contraseña">
+            <button onclick="login()">Iniciar Sesión</button>
+            <div id="login-error" class="error"></div>
+        </div>
 
-        <footer>
-            <p>&copy; 2023 Gohan File | Creador WILKER OFC</p>
-        </footer>
+        <!-- Register Form -->
+        <div id="register-form" class="form">
+            <input type="text" id="register-username" placeholder="Nombre de usuario">
+            <input type="email" id="register-email" placeholder="Correo electrónico">
+            <input type="password" id="register-password" placeholder="Contraseña">
+            <button onclick="register()">Crear Cuenta</button>
+            <div id="register-error" class="error"></div>
+            <div id="register-success" class="success"></div>
+        </div>
     </div>
-    <script src="script.js"></script>
+
+    <script>
+        const API_URL = window.location.origin;
+
+        function switchTab(tab) {
+            const tabs = document.querySelectorAll('.tab');
+            const forms = document.querySelectorAll('.form');
+            
+            tabs.forEach(t => t.classList.remove('active'));
+            forms.forEach(f => f.classList.remove('active'));
+            
+            if (tab === 'login') {
+                tabs[0].classList.add('active');
+                document.getElementById('login-form').classList.add('active');
+            } else {
+                tabs[1].classList.add('active');
+                document.getElementById('register-form').classList.add('active');
+            }
+            
+            // Limpiar errores
+            document.getElementById('login-error').innerHTML = '';
+            document.getElementById('register-error').innerHTML = '';
+            document.getElementById('register-success').innerHTML = '';
+        }
+
+        async function login() {
+            const email = document.getElementById('login-email').value;
+            const password = document.getElementById('login-password').value;
+            
+            if (!email || !password) {
+                document.getElementById('login-error').innerHTML = 'Completa todos los campos';
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    localStorage.setItem('token', data.token);
+                    localStorage.setItem('user', JSON.stringify(data.user));
+                    window.location.href = '/dashboard.html';
+                } else {
+                    document.getElementById('login-error').innerHTML = data.error || 'Error al iniciar sesión';
+                }
+            } catch (error) {
+                document.getElementById('login-error').innerHTML = 'Error de conexión';
+            }
+        }
+
+        async function register() {
+            const username = document.getElementById('register-username').value;
+            const email = document.getElementById('register-email').value;
+            const password = document.getElementById('register-password').value;
+            
+            if (!username || !email || !password) {
+                document.getElementById('register-error').innerHTML = 'Completa todos los campos';
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, email, password })
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('register-success').innerHTML = 'Cuenta creada! Redirigiendo al login...';
+                    setTimeout(() => switchTab('login'), 2000);
+                } else {
+                    document.getElementById('register-error').innerHTML = data.error || 'Error al crear cuenta';
+                }
+            } catch (error) {
+                document.getElementById('register-error').innerHTML = 'Error de conexión';
+            }
+        }
+    </script>
 </body>
 </html>
